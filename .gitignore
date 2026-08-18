@@ -1,0 +1,39 @@
+# Environment
+.env
+*.env
+.venv/
+
+# Frontend
+node_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Django
+*.log
+logs/
+staticfiles/
+media/
+
+# IDE
+.vscode/
+.trae/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# NSSM (Windows service manager)
+nssm/
+nssm.exe
+
+reset_repo.bat
+
+Agents.md
+opencode.json
