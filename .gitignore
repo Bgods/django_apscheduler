@@ -1,0 +1,49 @@
+# Environment
+.env
+*.env
+.venv/
+venv/
+env/
+
+# Frontend
+node_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Django
+*.log
+logs/
+staticfiles/
+media/
+db.sqlite3
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
+
+
+# IDE
+.vscode/
+.qoder/
+.trae/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# NSSM (Windows service manager)
+nssm/
+nssm.exe
+
+reset_repo.bat
+npm_run_build.bat
+
+Agents.md
+opencode.json
