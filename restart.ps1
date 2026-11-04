@@ -1,4 +1,6 @@
 # restart.ps1 - 重启 Django APScheduler 服务
+Set-Location $PSScriptRoot
+
 $NSSM = '.\nssm\nssm.exe'
 $SERVICE_NAME = 'django_apscheduler'
 

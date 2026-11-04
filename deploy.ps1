@@ -16,6 +16,15 @@ Write-Host '  一键部署 / 更新脚本'
 Write-Host '========================================'
 Write-Host ''
 
+# 注册/操作 Windows 服务需要管理员权限
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+    Write-Host '  [错误] 请以管理员身份运行（注册 Windows 服务需要管理员权限）' -ForegroundColor Red
+    Write-Host '  操作方式：右键 deploy.bat → 以管理员身份运行' -ForegroundColor Yellow
+    pause
+    exit 1
+}
+
 # ============================================================
 # Step 0: 拉取最新代码（确保脚本自身也是最新版）
 # ============================================================
@@ -128,7 +137,8 @@ Write-Host '[4/9] 检查环境配置...'
 if (-not (Test-Path '.env')) {
     if (Test-Path '.env.example') {
         Copy-Item '.env.example' '.env'
-        Write-Host '  [警告] 已从 .env.example 复制生成 .env，请修改数据库等配置后重新运行！' -ForegroundColor Yellow
+        Write-Host '  [提示] 已根据 .env.example 生成 .env（默认使用 SQLite，无需安装数据库）' -ForegroundColor Yellow
+        Write-Host '         多机部署请先取消注释并填写 MySQL 配置，然后重新运行本脚本' -ForegroundColor Yellow
         pause
         exit 0
     } else {
@@ -138,6 +148,13 @@ if (-not (Test-Path '.env')) {
 } else {
     Write-Host '  .env 配置文件已存在'
 }
+
+# 服务端口与 .env 中的 SCHEDULER_API_PORT 保持一致（多机部署必须一致）
+$portLine = Get-Content '.env' -ErrorAction SilentlyContinue | Where-Object { $_ -match '^\s*SCHEDULER_API_PORT\s*=\s*(\d+)' } | Select-Object -First 1
+if ($portLine -and $portLine -match '=\s*(\d+)') {
+    $PORT = [int]$Matches[1]
+}
+Write-Host "  服务端口: $PORT"
 
 # ============================================================
 # Step 5: 安装 Python 依赖
@@ -201,19 +218,22 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host ''
 Write-Host '[9/9] 注册并启动服务...'
 $svc = Get-Service -Name $SERVICE_NAME -ErrorAction SilentlyContinue
+$workDir = (Get-Location).Path
+# --insecure：DEBUG=False 时 runserver 仍可提供 /static/ 前端产物
+$appParams = "manage.py runserver 0.0.0.0:$PORT --noreload --insecure"
 if (-not $svc) {
     Write-Host '  注册服务...'
-    $workDir = (Get-Location).Path
     & $NSSM install $SERVICE_NAME "$workDir\.venv\Scripts\python.exe"
-    & $NSSM set $SERVICE_NAME AppDirectory "$workDir"
-    & $NSSM set $SERVICE_NAME AppParameters "manage.py runserver 0.0.0.0:$PORT --noreload"
     & $NSSM set $SERVICE_NAME DisplayName "Django APScheduler"
     & $NSSM set $SERVICE_NAME Start "SERVICE_AUTO_START"
     & $NSSM set $SERVICE_NAME AppExit "Default" "Restart"
     & $NSSM set $SERVICE_NAME AppRestartDelay 5000
     Write-Host '  服务注册完成'
 }
-& $NSSM start $SERVICE_NAME 2>$null
+# 每次部署都同步服务参数，端口或启动参数变更后无需删除服务重建
+& $NSSM set $SERVICE_NAME AppDirectory "$workDir"
+& $NSSM set $SERVICE_NAME AppParameters $appParams
+& $NSSM restart $SERVICE_NAME 2>$null
 Start-Sleep -Seconds 3
 
 $status = (& $NSSM status $SERVICE_NAME 2>$null).Trim()

@@ -72,7 +72,7 @@ try {
 Write-Host "[3/4] Installing service..." -ForegroundColor Cyan
 & $nssmExe install $serviceName $pythonPath
 & $nssmExe set $serviceName AppDirectory $pwd
-& $nssmExe set $serviceName AppParameters "$managePath runserver 0.0.0.0:$port --noreload"
+& $nssmExe set $serviceName AppParameters "$managePath runserver 0.0.0.0:$port --noreload --insecure"
 & $nssmExe set $serviceName DisplayName "Django APScheduler"
 & $nssmExe set $serviceName Start SERVICE_AUTO_START
 & $nssmExe set $serviceName AppExit Default Restart

@@ -54,7 +54,7 @@
 
 ### 2.3 代码同步
 
-使用 `deploy.bat `从 Gitea 拉取最新代码，确保各机器代码版本一致：
+使用 `deploy.bat` 从 GitHub（或自建 Git 仓库）拉取最新代码，确保各机器代码版本一致：
 
 ```PowerShell
 .\deploy.bat
@@ -127,5 +127,5 @@ netsh advfirewall firewall add rule name="Django APScheduler" dir=in action=allo
 
 - 任务配置存储在数据库中，所有机器共享
 - 修改任务后无需重启，各机器会自动同步
-- 代码更新后需在各机器执行 `restart_service.bat` 重启服务
+- 代码更新后在各机器执行 `deploy.bat`（会自动更新代码并重启服务）
 

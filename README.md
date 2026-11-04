@@ -116,15 +116,17 @@ cd django_apscheduler
 
 ### 2. 配置环境
 
-复制 `.env.example` 为 `.env` 并修改：
+复制 `.env.example` 为 `.env`：
 
 ```powershell
 copy .env.example .env
 ```
 
-主要配置项：
-- `SECRET_KEY`：修改为随机字符串
-- `NAME`/`USER`/`PASSWORD`/`HOST`/`PORT`：MySQL 数据库配置（多机部署必须使用 MySQL）
+默认配置即可单机运行，无需安装数据库：
+
+- `SECRET_KEY`：建议修改为随机字符串
+- 默认使用 SQLite（`db.sqlite3` 自动创建）
+- 多机部署时，取消注释并填写 `NAME`/`USER`/`PASSWORD`/`HOST`/`PORT`，改用 MySQL
 
 ### 3. 运行部署脚本
 
