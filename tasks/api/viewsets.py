@@ -6,9 +6,9 @@ import urllib.request
 from django.conf import settings
 from django.contrib.auth import authenticate, login, logout, get_user_model
 from django.contrib.auth.models import Group, Permission
-from django.db.models import OuterRef, Subquery
+from django.db.models import OuterRef, Subquery, Count, Max, Prefetch
 from rest_framework import viewsets, status
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view
 from rest_framework.permissions import AllowAny, IsAdminUser
 from rest_framework.response import Response
 from rest_framework.exceptions import AuthenticationFailed, ValidationError
@@ -40,6 +40,22 @@ class HostConfigViewSet(viewsets.ModelViewSet):
 class DatabaseConfigViewSet(viewsets.ModelViewSet):
     queryset = DatabaseConfig.objects.all()
     serializer_class = DatabaseConfigSerializer
+
+    def get_queryset(self):
+        qs = super().get_queryset().annotate(
+            task_count=Count('tasks', distinct=True)
+        )
+        params = self.request.query_params
+        search = params.get('search')
+        if search:
+            qs = qs.filter(label__icontains=search) | qs.filter(host__icontains=search)
+        db_type = params.get('db_type')
+        if db_type:
+            qs = qs.filter(db_type=db_type)
+        is_active = params.get('is_active')
+        if is_active is not None:
+            qs = qs.filter(is_active=is_active.lower() in ('true', '1'))
+        return qs
 
     @action(detail=False, methods=['post'])
     def test_connection(self, request):
@@ -84,11 +100,27 @@ class DatabaseConfigViewSet(viewsets.ModelViewSet):
 
 
 class TaskConfigViewSet(viewsets.ModelViewSet):
-    queryset = TaskConfig.objects.all().prefetch_related('hosts')
+    queryset = TaskConfig.objects.all()
     serializer_class = TaskConfigSerializer
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        # 预查询每个任务最新日志的 ID（非关联子查询，数据库可优化为 Hash Join）
+        latest_log_ids = (
+            TaskExecutionLog.objects
+            .values('task').annotate(latest_id=Max('id'))
+            .values('latest_id')
+        )
+        # Prefetch 仅加载每个任务的最新一条日志
+        last_log_prefetch = Prefetch(
+            'execution_logs',
+            queryset=TaskExecutionLog.objects.filter(id__in=latest_log_ids),
+            to_attr='_last_logs',
+        )
+        qs = (
+            TaskConfig.objects
+            .select_related('database')
+            .prefetch_related('hosts', last_log_prefetch)
+        )
         params = self.request.query_params
         is_active = params.get('is_active')
         if is_active is not None:
@@ -101,20 +133,29 @@ class TaskConfigViewSet(viewsets.ModelViewSet):
             qs = qs.filter(group=group)
         host = params.get('host')
         if host:
-            # 按分配的机器 IP 筛选任务
             qs = qs.filter(hosts__ip=host)
         search = params.get('search')
         if search:
             qs = qs.filter(name__icontains=search)
+        database = params.get('database')
+        if database:
+            qs = qs.filter(database_id=database)
         last_result = params.get('last_result')
         if last_result:
-            # 按最近一次执行结果筛选任务
-            qs = qs.annotate(
-                _last_log_result=Subquery(
-                    TaskExecutionLog.objects.filter(task=OuterRef('pk')).order_by('-id').values('result')[:1]
-                )
-            ).filter(_last_log_result=last_result)
+            # 非关联子查询：找出最新日志结果为指定值的任务
+            task_ids = (
+                TaskExecutionLog.objects
+                .filter(id__in=latest_log_ids, result=last_result)
+                .values('task_id')
+            )
+            qs = qs.filter(id__in=task_ids)
         return qs
+
+    @action(detail=False, methods=['get'])
+    def options(self, request):
+        """轻量接口：仅返回 id + name，供下拉框使用"""
+        tasks = list(TaskConfig.objects.values('id', 'name').order_by('name'))
+        return Response(tasks)
 
     @action(detail=True, methods=['post'])
     def execute(self, request, pk=None):
@@ -202,6 +243,9 @@ class TaskExecutionLogViewSet(viewsets.ReadOnlyModelViewSet):
         search = params.get('search')
         if search:
             qs = qs.filter(error_message__icontains=search) | qs.filter(command_text__icontains=search)
+        # 列表查询排除大文本字段
+        if self.action == 'list':
+            qs = qs.defer('output', 'error_message')
         return qs
 
 
@@ -308,3 +352,45 @@ class PermissionViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAdminUser]
     queryset = Permission.objects.select_related('content_type').all().order_by('content_type__app_label', 'codename')
     serializer_class = PermissionSerializer
+
+
+@api_view(['GET'])
+def dashboard_stats(request):
+    """仪表盘统计数据（只返回数字，不返回完整对象）"""
+    # 任务统计
+    total_tasks = TaskConfig.objects.count()
+    active_tasks = TaskConfig.objects.filter(is_active=True).count()
+    python_tasks = TaskConfig.objects.filter(task_type='python').count()
+    sql_tasks = TaskConfig.objects.filter(task_type='sql').count()
+    # 分组统计
+    group_stats = list(
+        TaskConfig.objects.filter(group__isnull=False)
+        .exclude(group='')
+        .values('group')
+        .annotate(count=Count('id'))
+        .order_by('-count')
+    )
+    group_stats = [{'name': g['group'], 'count': g['count']} for g in group_stats]
+    # 机器/数据库数量
+    host_count = HostConfig.objects.count()
+    db_count = DatabaseConfig.objects.count()
+    # 最近 10 条执行日志（排除大文本）
+    recent_logs = list(
+        TaskExecutionLog.objects.select_related('task')
+        .values(
+            'id', 'task__name', 'execution_host', 'result', 'duration', 'start_time',
+        )[:10]
+    )
+    for log in recent_logs:
+        log['task_name'] = log.pop('task__name')
+        log['result_display'] = dict(TaskExecutionLog.ResultType.choices).get(log['result'], log['result'])
+    return Response({
+        'total_tasks': total_tasks,
+        'active_tasks': active_tasks,
+        'python_tasks': python_tasks,
+        'sql_tasks': sql_tasks,
+        'host_count': host_count,
+        'db_count': db_count,
+        'group_stats': group_stats,
+        'recent_logs': recent_logs,
+    })

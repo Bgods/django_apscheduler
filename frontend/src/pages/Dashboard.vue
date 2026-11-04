@@ -129,33 +129,21 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
-import { getTasks, getHosts, getDatabases, getLogs } from '../api'
+import { ref, onMounted } from 'vue'
+import { getDashboardStats } from '../api'
 
 const stats = ref({
   totalTasks: 0, activeTasks: 0, pythonTasks: 0, sqlTasks: 0,
   hostCount: 0, dbCount: 0,
 })
 const recentLogs = ref([])
-const allTasks = ref([])
+const groupStats = ref([])
 
 const groupColors = [
   '#1890ff', '#52c41a', '#fa8c16', '#722ed1', '#eb2f96',
   '#13c2c2', '#fa541c', '#2f54eb', '#a0d911', '#f5222d',
   '#722ed1', '#1890ff', '#52c41a', '#fa8c16', '#eb2f96',
 ]
-
-const groupStats = computed(() => {
-  const map = {}
-  allTasks.value.forEach(t => {
-    if (t.group) {
-      map[t.group] = (map[t.group] || 0) + 1
-    }
-  })
-  return Object.entries(map)
-    .map(([name, count]) => ({ name, count }))
-    .sort((a, b) => b.count - a.count)
-})
 
 const resultTagType = (result) => {
   const map = { SUCCESS: 'success', FAILED: 'danger', TIMEOUT: 'warning', INTERRUPTED: 'info', RUNNING: '' }
@@ -169,23 +157,17 @@ const formatTime = (t) => {
 
 onMounted(async () => {
   try {
-    const [tasksRes, hostsRes, dbsRes, logsRes] = await Promise.all([
-      getTasks({ page_size: 1000 }),
-      getHosts(),
-      getDatabases(),
-      getLogs({ page_size: 10 }),
-    ])
-    const tasks = tasksRes.data.results || tasksRes.data
-    allTasks.value = tasks
+    const { data } = await getDashboardStats()
     stats.value = {
-      totalTasks: tasks.length,
-      activeTasks: tasks.filter(t => t.is_active).length,
-      pythonTasks: tasks.filter(t => t.task_type === 'python').length,
-      sqlTasks: tasks.filter(t => t.task_type === 'sql').length,
-      hostCount: (hostsRes.data.results || hostsRes.data).length,
-      dbCount: (dbsRes.data.results || dbsRes.data).length,
+      totalTasks: data.total_tasks,
+      activeTasks: data.active_tasks,
+      pythonTasks: data.python_tasks,
+      sqlTasks: data.sql_tasks,
+      hostCount: data.host_count,
+      dbCount: data.db_count,
     }
-    recentLogs.value = logsRes.data.results || logsRes.data
+    groupStats.value = data.group_stats
+    recentLogs.value = data.recent_logs
   } catch (e) {
     console.error('加载仪表盘数据失败:', e)
   }

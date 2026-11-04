@@ -47,9 +47,12 @@ class UserCreateSerializer(UserManageSerializer):
 
     def create(self, validated_data):
         password = validated_data.pop('password')
+        groups = validated_data.pop('groups', [])
         user = get_user_model()(**validated_data)
         user.set_password(password)
         user.save()
+        if groups:
+            user.groups.set(groups)
         return user
 
 
@@ -106,6 +109,11 @@ class DatabaseConfigSerializer(serializers.ModelSerializer):
         model = DatabaseConfig
         fields = '__all__'
 
+    def get_fields(self):
+        fields = super().get_fields()
+        fields['task_count'] = serializers.IntegerField(read_only=True, default=0)
+        return fields
+
 
 class TaskConfigSerializer(serializers.ModelSerializer):
     cron_description = serializers.ReadOnlyField()
@@ -122,9 +130,9 @@ class TaskConfigSerializer(serializers.ModelSerializer):
         model = TaskConfig
         fields = [
             'id', 'name', 'group', 'task_type', 'is_active',
-            'project_path', 'executor_path', 'script_path',
+            'project_path', 'executor_path', 'script_path', 'script_args',
             'sql_content', 'cron_expression', 'cron_description',
-            'timeout_seconds', 'hosts', 'host_ids', 'hosts_display',
+            'timeout_seconds', 'skip_if_running', 'hosts', 'host_ids', 'hosts_display',
             'database', 'created_at', 'updated_at',
             'script_display', 'next_runs', 'last_execution',
         ]
@@ -138,12 +146,9 @@ class TaskConfigSerializer(serializers.ModelSerializer):
 
     def get_script_display(self, obj):
         if obj.task_type == 'sql':
-            if obj.sql_content and str(obj.sql_content).strip():
-                preview = str(obj.sql_content).strip()[:50]
-                if len(str(obj.sql_content).strip()) > 50:
-                    preview += '...'
-                return preview
-            return '未填写 SQL'
+            if obj.database_id:
+                return f'[{obj.database.get_db_type_display()}] {obj.database.label} → 内联SQL[点击查看]'
+            return '内联SQL[点击查看]'
         path = os.path.join(obj.project_path, obj.script_path) if obj.script_path else obj.project_path
         return path
 
@@ -189,7 +194,12 @@ class TaskConfigSerializer(serializers.ModelSerializer):
             return '-'
 
     def get_last_execution(self, obj):
-        log = obj.execution_logs.order_by('-id').first()
+        # 使用 Prefetch 预加载的最新日志（避免 N+1 查询）
+        last_logs = getattr(obj, '_last_logs', None)
+        if last_logs is not None:
+            log = last_logs[0] if last_logs else None
+        else:
+            log = obj.execution_logs.order_by('-id').first()
         if not log:
             return None
         return {
@@ -219,3 +229,12 @@ class TaskExecutionLogSerializer(serializers.ModelSerializer):
             'duration', 'result', 'result_display', 'return_code',
             'output', 'error_message', 'execution_host', 'command_text',
         ]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # 列表接口排除大文本字段，只在详情页返回
+        view = self.context.get('view')
+        if view and view.action == 'list':
+            data.pop('output', None)
+            data.pop('error_message', None)
+        return data

@@ -35,6 +35,7 @@ api.interceptors.response.use(
 
 // ===== Tasks =====
 export const getTasks = (params) => api.get('/tasks/', { params })
+export const getTaskOptions = () => api.get('/tasks/options/')
 export const getTask = (id) => api.get(`/tasks/${id}/`)
 export const createTask = (data) => api.post('/tasks/', data)
 export const updateTask = (id, data) => api.patch(`/tasks/${id}/`, data)
@@ -55,6 +56,9 @@ export const createDatabase = (data) => api.post('/databases/', data)
 export const updateDatabase = (id, data) => api.patch(`/databases/${id}/`, data)
 export const deleteDatabase = (id) => api.delete(`/databases/${id}/`)
 export const testDbConnection = (data) => api.post('/databases/test_connection/', data)
+
+// ===== Dashboard =====
+export const getDashboardStats = () => api.get('/dashboard/')
 
 // ===== Logs =====
 export const getLogs = (params) => api.get('/logs/', { params })

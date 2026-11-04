@@ -40,6 +40,11 @@
             <el-tag :type="row.is_active ? 'success' : 'info'" size="small">{{ row.is_active ? '是' : '否' }}</el-tag>
           </template>
         </el-table-column>
+        <el-table-column prop="task_count" label="关联任务数" width="110" align="center">
+          <template #default="{ row }">
+            <el-link type="primary" :underline="false" @click="goTasks(row.id)">{{ row.task_count ?? 0 }}</el-link>
+          </template>
+        </el-table-column>
         <el-table-column prop="created_at" label="创建时间" width="170">
           <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
         </el-table-column>
@@ -123,8 +128,15 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getDatabases, createDatabase, updateDatabase, deleteDatabase, testDbConnection } from '../api'
+
+const router = useRouter()
+
+const goTasks = (dbId) => {
+  router.push({ path: '/tasks', query: { database: dbId } })
+}
 
 const dbTypes = [
   ['mysql', 'MySQL'], ['postgresql', 'PostgreSQL'],

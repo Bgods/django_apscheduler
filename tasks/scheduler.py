@@ -20,15 +20,24 @@ from .models import DatabaseConfig, HostConfig, TaskConfig, TaskExecutionLog
 
 logger = logging.getLogger('tasks')
 
-scheduler = BackgroundScheduler(timezone=settings.TIME_ZONE)
-scheduler.add_jobstore(DjangoJobStore(), "default")
-scheduler.add_jobstore(MemoryJobStore(), "tasks")  # 自定义任务用内存存储，避免多机竞争
+# 延迟初始化：避免模块导入时连接数据库（migrate 等命令不需要调度器）
+scheduler = None
 
 # 屏蔽"跳过"警告日志（任务仍在运行时跳过本次触发）
 logging.getLogger('apscheduler.executors.default').setLevel(logging.ERROR)
 logging.getLogger('apscheduler.scheduler').setLevel(logging.ERROR)
 # 屏蔽内存任务（tasks jobstore）在 django_apscheduler 中找不到 job 的警告
 logging.getLogger('django_apscheduler.jobstores').setLevel(logging.ERROR)
+
+
+def _get_scheduler():
+    """懒初始化调度器，仅在 start() 调用后创建"""
+    global scheduler
+    if scheduler is None:
+        scheduler = BackgroundScheduler(timezone=settings.TIME_ZONE)
+        scheduler.add_jobstore(DjangoJobStore(), "default")
+        scheduler.add_jobstore(MemoryJobStore(), "tasks")  # 自定义任务用内存存储，避免多机竞争
+    return scheduler
 
 
 def _get_current_host() -> str:
@@ -55,6 +64,38 @@ def _clean_path(path: str) -> str:
     import re
     # 移除常见不可见控制字符：LRE‪ RLE‫ PDF‬ LRO‭ RLO‮ 等
     return re.sub(r'[\u200b\u200c\u200d\u200e\u200f\u202a-\u202e\ufeff\ufffc]', '', path).strip()
+
+
+def _force_kill_process_tree(proc: subprocess.Popen):
+    """强制终止进程树（Windows 用 taskkill /T 递归，其余用 terminate）"""
+    try:
+        if proc.poll() is not None:
+            return
+        if os.name == 'nt':
+            subprocess.run(
+                ['taskkill', '/F', '/T', '/PID', str(proc.pid)],
+                capture_output=True, timeout=10,
+            )
+        else:
+            proc.kill()
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
+def _communicate_limited(proc: subprocess.Popen, timeout: float = 10):
+    """带兜底超时的 communicate，避免进程树杀不干净时永久阻塞"""
+    try:
+        return proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        # communicate 超时仍未结束，丢弃管道继续（此时进程已强制终止）
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        return (b'', b'')
 
 
 def _get_default_python() -> str:
@@ -108,6 +149,13 @@ def _get_cmd_and_cwd(config: TaskConfig):
 
     py = executor or _get_default_python()
     cmd = [py, script]
+    
+    # 追加命令行参数
+    if config.script_args and config.script_args.strip():
+        import shlex
+        # 使用 shlex 解析参数，支持引号包裹的参数
+        args = shlex.split(config.script_args.strip())
+        cmd.extend(args)
 
     return cmd, cwd
 
@@ -117,13 +165,18 @@ def execute_script(config: TaskConfig, force: bool = False) -> TaskExecutionLog:
     
     force=True 时跳过主机匹配检查（用于跨机 API 调用）。
     """
+    from django.db import close_old_connections
+    
+    # 关闭可能已断开的数据库连接（长时间空闲后 MySQL 会主动断开）
+    close_old_connections()
+    
     # 任务可能在调度期间被删除，捕获 DoesNotExist 并清理残留 job
     try:
         config.refresh_from_db()
     except TaskConfig.DoesNotExist:
         logger.info(f'任务已被删除，从调度器移除残留 job: task_{config.pk}')
         try:
-            scheduler.remove_job(f'task_{config.id}', jobstore='tasks')
+            _get_scheduler().remove_job(f'task_{config.id}', jobstore='tasks')
         except Exception:
             pass
         return None
@@ -135,6 +188,35 @@ def execute_script(config: TaskConfig, force: bool = False) -> TaskExecutionLog:
     if not force and has_hosts and not config.hosts.filter(ip=current_host).exists():
         assigned_ips = list(config.hosts.values_list('ip', flat=True))
         return None
+
+    # 执行中跳过：如果任务在本机还在执行中，跳过本次执行
+    if config.skip_if_running:
+        running_log = TaskExecutionLog.objects.filter(
+            task=config,
+            result=TaskExecutionLog.ResultType.RUNNING,
+            execution_host=current_host,
+        ).first()
+        if running_log:
+            logger.info(f'任务 {config.name} 在本机({current_host})仍在执行中，跳过本次触发')
+            # 记录一条 SKIPPED 日志
+            command_text = ''
+            if config.task_type == 'sql':
+                command_text = f'[{config.database.get_db_type_display()}] {config.database.label} → [内联SQL]' if config.database_id else f'[SQL] [内联SQL]'
+            else:
+                cmd, cwd = _get_cmd_and_cwd(config)
+                command_text = ' '.join(cmd)
+            
+            skip_log = TaskExecutionLog.objects.create(
+                task=config,
+                start_time=timezone.now(),
+                result=TaskExecutionLog.ResultType.SKIPPED,
+                execution_host=current_host,
+                command_text=command_text,
+                end_time=timezone.now(),
+                duration=0,
+                error_message=f'任务仍在执行中（日志ID: {running_log.id}），跳过本次触发',
+            )
+            return skip_log
 
     command_text = ''
     if config.task_type == 'sql':
@@ -167,7 +249,22 @@ def execute_script(config: TaskConfig, force: bool = False) -> TaskExecutionLog:
         log.result = TaskExecutionLog.ResultType.FAILED
         log.error_message = str(e)
 
-    log.save()
+    # 保存日志状态，关闭旧连接后重试一次（防止长时间执行后连接断开）
+    try:
+        close_old_connections()
+        log.save()
+    except Exception as e:
+        logger.error(f'保存日志状态失败 (log_id={log.id}): {e}，尝试重新连接...')
+        try:
+            # 强制关闭所有连接，让 Django 重新建立连接
+            from django.db import connections
+            for conn in connections.all():
+                conn.close()
+            log.save()
+            logger.info(f'重试后保存成功 (log_id={log.id})')
+        except Exception as e2:
+            logger.error(f'重试后仍保存失败 (log_id={log.id}): {e2}')
+
     return log
 
 
@@ -186,8 +283,8 @@ def _execute_python(config: TaskConfig, log: TaskExecutionLog):
     try:
         stdout, stderr = process.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
-        process.kill()
-        _ = process.communicate()  # 清理僵尸进程
+        _force_kill_process_tree(process)
+        stdout, stderr = _communicate_limited(process)
         raise
     end = timezone.now()
 
@@ -195,13 +292,23 @@ def _execute_python(config: TaskConfig, log: TaskExecutionLog):
     log.duration = (end - start).total_seconds()
     log.return_code = process.returncode
     encoding = locale.getpreferredencoding(do_setlocale=False)
-    log.output = stdout.decode(encoding, errors='replace')[-5000:]
+    out_text = stdout.decode(encoding, errors='replace')
+    err_text = stderr.decode(encoding, errors='replace')
+
+    # stderr 合并到 output（Python logging 默认输出到 stderr）
+    if err_text:
+        if out_text:
+            log.output = (out_text + '\n' + err_text)[-5000:]
+        else:
+            log.output = err_text[-5000:]
+    else:
+        log.output = out_text[-5000:]
 
     if process.returncode == 0:
         log.result = TaskExecutionLog.ResultType.SUCCESS
     else:
         log.result = TaskExecutionLog.ResultType.FAILED
-        log.error_message = stderr.decode(encoding, errors='replace')[-2000:]
+        log.error_message = err_text[-2000:]
 
 
 def _execute_sql(config: TaskConfig, log: TaskExecutionLog):
@@ -263,8 +370,8 @@ def _execute_sql(config: TaskConfig, log: TaskExecutionLog):
         try:
             stdout, stderr = process.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
-            process.kill()
-            _ = process.communicate()
+            _force_kill_process_tree(process)
+            stdout, stderr = _communicate_limited(process)
             raise
         end = timezone.now()
 
@@ -272,13 +379,22 @@ def _execute_sql(config: TaskConfig, log: TaskExecutionLog):
         log.duration = (end - start).total_seconds()
         log.return_code = process.returncode
         encoding = locale.getpreferredencoding(do_setlocale=False)
-        log.output = stdout.decode(encoding, errors='replace')[-5000:]
+        out_text = stdout.decode(encoding, errors='replace')
+        err_text = stderr.decode(encoding, errors='replace')
+
+        if err_text:
+            if out_text:
+                log.output = (out_text + '\n' + err_text)[-5000:]
+            else:
+                log.output = err_text[-5000:]
+        else:
+            log.output = out_text[-5000:]
 
         if process.returncode == 0:
             log.result = TaskExecutionLog.ResultType.SUCCESS
         else:
             log.result = TaskExecutionLog.ResultType.FAILED
-            log.error_message = stderr.decode(encoding, errors='replace')[-2000:]
+            log.error_message = err_text[-2000:]
     finally:
         for path in (cfg_path, sql_tmp_path):
             if path:
@@ -295,7 +411,7 @@ def run_task_now(config: TaskConfig, force: bool = False):
 
 def register_task(config: TaskConfig):
     """根据 TaskConfig 注册 cron 定时任务到 APScheduler（使用内存 job store，每台机器独立调度）"""
-    if not scheduler.running:
+    if scheduler is None or not scheduler.running:
         logger.warning(f'调度器未运行，跳过注册: {config.name}')
         return
 
@@ -357,7 +473,7 @@ def register_task(config: TaskConfig):
 
 def unregister_task(config: TaskConfig):
     """从调度器移除任务"""
-    if not scheduler.running:
+    if scheduler is None or not scheduler.running:
         return
     try:
         scheduler.remove_job(build_job_id(config), jobstore='tasks')
@@ -385,6 +501,47 @@ def _cleanup_running_logs():
         logger.warning(f'清理了 {count} 条遗留的 RUNNING 日志（服务重启中断）')
 
 
+def _cleanup_stale_running_logs():
+    """定时扫描所有 RUNNING 状态日志，超过任务超时时间的标记为 INTERRUPTED。
+
+    解决场景：任务进程异常退出（如被外部杀死、机器断网/断电）但 Django 服务未重启，
+    导致日志永远停留在 RUNNING 状态。
+    """
+    from django.db import connection
+    if 'task_config' not in connection.introspection.table_names():
+        return
+    now = timezone.now()
+    stale_ids = []
+    for log in TaskExecutionLog.objects.filter(
+        result=TaskExecutionLog.ResultType.RUNNING
+    ).select_related('task'):
+        elapsed = (now - log.start_time).total_seconds()
+        timeout = log.task.timeout_seconds
+        # 未设置超时的任务，用 24 小时作为兜底阈值
+        threshold = timeout if timeout and timeout > 0 else 86400
+        if elapsed > threshold:
+            stale_ids.append(log.id)
+    if stale_ids:
+        TaskExecutionLog.objects.filter(id__in=stale_ids).update(
+            result=TaskExecutionLog.ResultType.INTERRUPTED,
+            error_message='任务进程异常退出，状态未能正常更新（由定时检测自动标记）',
+            end_time=now,
+        )
+        logger.warning(f'定时检测：已将 {len(stale_ids)} 条超时的 RUNNING 日志标记为 INTERRUPTED')
+
+
+def _cleanup_django_jobstore():
+    """清空 DjangoJobStore 中的旧 job（历史遗留，当前只用 MemoryJobStore）"""
+    try:
+        from django_apscheduler.models import DjangoJob
+        count = DjangoJob.objects.count()
+        if count:
+            DjangoJob.objects.all().delete()
+            logger.info(f'清理了 DjangoJobStore 中 {count} 个旧 job')
+    except Exception as e:
+        logger.warning(f'清理 DjangoJobStore 失败: {e}')
+
+
 def sync_all_tasks():
     """同步分配给当前机器的启用任务到调度器"""
     from django.db import connection
@@ -407,17 +564,19 @@ def sync_all_tasks():
 
 def start():
     """启动调度器"""
-    if scheduler.running:
+    s = _get_scheduler()
+    if s.running:
         logger.info('调度器已在运行')
         return
     try:
-        scheduler.start()
+        s.start()
         logger.info('调度器启动成功')
         _cleanup_running_logs()
+        _cleanup_django_jobstore()
         sync_all_tasks()
         # 定时从数据库刷新任务列表（跨机器变更自动感知）
         sync_interval = getattr(settings, 'TASK_SYNC_INTERVAL', 60)
-        scheduler.add_job(
+        s.add_job(
             sync_all_tasks,
             'interval',
             seconds=sync_interval,
@@ -427,11 +586,20 @@ def start():
             misfire_grace_time=300,
         )
         logger.info(f'任务同步刷新间隔: {sync_interval}s')
+        # 定时检测 RUNNING 日志是否超时（防止僵尸日志）
+        s.add_job(
+            _cleanup_stale_running_logs,
+            'interval',
+            minutes=30,
+            id='_cleanup_stale_running_logs_',
+            jobstore='tasks',
+            replace_existing=True,
+        )
     except Exception as e:
         logger.warning(f'调度器启动失败（表可能尚未创建）: {e}')
 
 
 def shutdown():
     """优雅关闭调度器"""
-    if scheduler.running:
+    if scheduler is not None and scheduler.running:
         scheduler.shutdown(wait=False)

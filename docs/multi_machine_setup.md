@@ -54,10 +54,10 @@
 
 ### 2.3 代码同步
 
-使用 `sync_code.ps1` 从 Gitea 拉取最新代码，确保各机器代码版本一致：
+使用 `deploy.bat `从 Gitea 拉取最新代码，确保各机器代码版本一致：
 
-```powershell
-.\sync_code.ps1
+```PowerShell
+.\deploy.bat
 ```
 
 ***

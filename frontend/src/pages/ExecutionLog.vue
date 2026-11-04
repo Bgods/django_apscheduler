@@ -17,6 +17,7 @@
           <el-option label="超时" value="TIMEOUT" />
           <el-option label="中断" value="INTERRUPTED" />
           <el-option label="执行中" value="RUNNING" />
+          <el-option label="跳过" value="SKIPPED" />
         </el-select>
         <el-select v-model="filterHost" placeholder="执行机器" clearable style="width: 150px;" @change="fetchData">
           <el-option v-for="h in hosts" :key="h" :label="h" :value="h" />
@@ -62,7 +63,7 @@
       />
     </div>
 
-    <el-drawer v-model="drawerVisible" title="执行日志详情" size="550px">
+    <el-dialog v-model="drawerVisible" title="执行日志详情" width="1400px" destroy-on-close>
       <template v-if="selectedLog">
         <el-descriptions :column="2" border>
           <el-descriptions-item label="任务">{{ selectedLog.task_name }}</el-descriptions-item>
@@ -98,14 +99,14 @@
           />
         </div>
       </template>
-    </el-drawer>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { getLogs, getHosts, getTasks, getTaskGroups } from '../api'
+import { getLogs, getHosts, getTaskOptions, getTaskGroups } from '../api'
 
 const route = useRoute()
 const logs = ref([])
@@ -126,7 +127,7 @@ const drawerVisible = ref(false)
 const selectedLog = ref(null)
 
 const resultTagType = (result) => {
-  const map = { SUCCESS: 'success', FAILED: 'danger', TIMEOUT: 'warning', INTERRUPTED: 'info', RUNNING: '' }
+  const map = { SUCCESS: 'success', FAILED: 'danger', TIMEOUT: 'warning', INTERRUPTED: 'info', RUNNING: '', SKIPPED: 'info' }
   return map[result] || ''
 }
 
@@ -164,8 +165,8 @@ onMounted(async () => {
     groupOptions.value = res.data.results || res.data || []
   } catch {}
   try {
-    const res = await getTasks({ page_size: 10000 })
-    taskOptions.value = res.data.results || res.data || []
+    const res = await getTaskOptions()
+    taskOptions.value = res.data || []
   } catch {}
   fetchData()
 })

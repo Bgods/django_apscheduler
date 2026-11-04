@@ -2,6 +2,8 @@
 .env
 *.env
 .venv/
+venv/
+env/
 
 # Frontend
 node_modules/
@@ -17,9 +19,13 @@ __pycache__/
 logs/
 staticfiles/
 media/
+db.sqlite3
+*.sqlite3
+
 
 # IDE
 .vscode/
+.qoder/
 .trae/
 .idea/
 *.swp
@@ -34,6 +40,7 @@ nssm/
 nssm.exe
 
 reset_repo.bat
+npm_run_build.bat
 
 Agents.md
 opencode.json

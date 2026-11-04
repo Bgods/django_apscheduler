@@ -92,6 +92,7 @@ watch(() => props.modelValue, (newVal) => {
 
 <style scoped>
 .sql-editor {
+  width: 100%;
   border: 1px solid #dcdfe6;
   border-radius: 4px;
   overflow: hidden;

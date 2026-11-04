@@ -13,8 +13,6 @@ class TasksConfig(AppConfig):
     def ready(self):
         import tasks.signals  # noqa
 
-        from django.db.models.signals import post_migrate
-
         # Django dev 服务器自动重载时，旧进程关闭期间不再尝试创建新线程
         from socketserver import ThreadingMixIn
         ThreadingMixIn.daemon_threads = True
@@ -27,16 +25,13 @@ class TasksConfig(AppConfig):
             from .scheduler import shutdown
             shutdown()
 
-        # 注册退出时优雅关闭调度器
-        atexit.register(_shutdown)
-
-        # 仅在主进程启动调度器，避免 runserver 自动重载导致的重复执行
-        # --noreload 模式下 RUN_MAIN 不会被设置，需放行
-        if 'runserver' in sys.argv and os.environ.get('RUN_MAIN') != 'true' and '--noreload' not in sys.argv:
+        # 仅在 runserver 时启动调度器，migrate 等管理命令不应启动
+        if 'runserver' not in sys.argv:
             return
 
-        # runserver 或生产环境启动调度器
-        _safe_start()
+        # runserver 自动重载时，子进程不应重复启动调度器
+        if os.environ.get('RUN_MAIN') == 'true' and '--noreload' not in sys.argv:
+            return
 
-        # 也注册 post_migrate，确保首次 migrate 后能启动
-        post_migrate.connect(lambda sender, **kwargs: _safe_start(), sender=self)
+        _safe_start()
+        atexit.register(_shutdown)

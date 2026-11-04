@@ -23,6 +23,9 @@
         <el-select v-model="filterHost" placeholder="分配机器" clearable style="width: 150px;" @change="fetchData">
           <el-option v-for="h in hostOptions" :key="h" :label="h" :value="h" />
         </el-select>
+        <el-select v-model="filterDatabase" placeholder="数据库配置" clearable style="width: 160px;" @change="fetchData">
+          <el-option v-for="db in databaseOptions" :key="db.id" :label="`${db.label} (${db.db_type})`" :value="db.id" />
+        </el-select>
         <el-select v-model="filterActive" placeholder="状态" clearable style="width: 110px;" @change="fetchData">
           <el-option label="已启用" value="true" />
           <el-option label="已停用" value="false" />
@@ -68,7 +71,15 @@
         </el-table-column>
         <el-table-column label="执行脚本" min-width="200" show-overflow-tooltip>
           <template #default="{ row }">
-            <span :style="{ fontSize: '12px', color: row.task_type === 'sql' ? '#52c41a' : '#606266' }">
+            <template v-if="row.task_type === 'sql'">
+              <span style="font-size:12px;color:#606266;">
+                <template v-if="row.script_display.includes(' → ')">
+                  {{ row.script_display.split(' → ')[0] }} →&nbsp;
+                </template>
+                <el-link type="success" :underline="false" style="font-size:12px;" @click="showSqlContent(row)">内联SQL[点击查看]</el-link>
+              </span>
+            </template>
+            <span v-else :style="{ fontSize: '12px', color: '#606266' }">
               {{ row.script_display || '-' }}
             </span>
           </template>
@@ -133,7 +144,7 @@
     </div>
 
     <!-- 新建/编辑弹窗 -->
-    <el-dialog v-model="dialogVisible" :title="editingTask ? '编辑任务' : '新建任务'" width="680px" destroy-on-close>
+    <el-dialog v-model="dialogVisible" :title="editingTask ? '编辑任务' : '新建任务'" width="90%" destroy-on-close>
       <el-form :model="form" label-width="100px" label-position="right">
         <el-row :gutter="16">
           <el-col :span="12">
@@ -141,14 +152,14 @@
               <el-input v-model="form.name" placeholder="输入任务名称" />
             </el-form-item>
           </el-col>
-          <el-col :span="12">
+        </el-row>
+        <el-row :gutter="16">
+          <el-col :span="8">
             <el-form-item label="分组">
               <el-input v-model="form.group" placeholder="如：数据同步" />
             </el-form-item>
           </el-col>
-        </el-row>
-        <el-row :gutter="16">
-          <el-col :span="12">
+          <el-col :span="8">
             <el-form-item label="任务类型">
               <el-select v-model="form.task_type" style="width: 100%;">
                 <el-option label="Python 脚本" value="python" />
@@ -156,7 +167,7 @@
               </el-select>
             </el-form-item>
           </el-col>
-          <el-col :span="12">
+          <el-col :span="8">
             <el-form-item label="超时(秒)">
               <el-input-number v-model="form.timeout_seconds" :min="0" style="width: 100%;" />
             </el-form-item>
@@ -170,6 +181,9 @@
           </el-form-item>
           <el-form-item label="执行脚本">
             <el-input v-model="form.script_path" placeholder="如 同步数据.py" />
+          </el-form-item>
+          <el-form-item label="脚本参数">
+            <el-input v-model="form.script_args" placeholder="如 --mode single --strategy full，留空则不传参数" />
           </el-form-item>
           <el-form-item label="执行器路径">
             <el-input v-model="form.executor_path" placeholder="留空使用系统默认 Python" />
@@ -188,34 +202,52 @@
           </el-form-item>
         </template>
 
-        <el-form-item label="Cron 表达式">
-          <el-input v-model="form.cron_expression" placeholder="分 时 日 月 周，留空=手动触发">
-            <template #append>
-              <el-popover placement="bottom" :width="320" trigger="click">
-                <template #reference>
-                  <el-button>快捷</el-button>
+        <el-row :gutter="16">
+          <el-col :span="12">
+            <el-form-item label="Cron 表达式">
+              <el-input v-model="form.cron_expression" placeholder="分 时 日 月 周，留空=手动触发">
+                <template #append>
+                  <el-popover placement="bottom" :width="320" trigger="click">
+                    <template #reference>
+                      <el-button>快捷</el-button>
+                    </template>
+                    <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                      <el-button v-for="p in cronPresets" :key="p[1]" size="small" @click="form.cron_expression = p[1]">{{ p[0] }}</el-button>
+                    </div>
+                  </el-popover>
                 </template>
-                <div style="display: flex; flex-wrap: wrap; gap: 6px;">
-                  <el-button v-for="p in cronPresets" :key="p[1]" size="small" @click="form.cron_expression = p[1]">{{ p[0] }}</el-button>
-                </div>
-              </el-popover>
-            </template>
-          </el-input>
-        </el-form-item>
-
-        <el-form-item label="分配机器">
-          <el-select v-model="form.host_ids" multiple style="width: 100%;" placeholder="留空=任意机器">
-            <el-option v-for="h in hosts" :key="h.id" :label="h.label ? `${h.label} (${h.ip})` : h.ip" :value="h.id" />
-          </el-select>
-        </el-form-item>
-
+              </el-input>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="分配机器">
+              <el-select v-model="form.host_ids" multiple style="width: 100%;" placeholder="留空=任意机器">
+                <el-option v-for="h in hosts" :key="h.id" :label="h.label ? `${h.label} (${h.ip})` : h.ip" :value="h.id" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+        </el-row>
         <el-form-item label="启用">
           <el-switch v-model="form.is_active" />
+        </el-form-item>
+        <el-form-item label="执行中跳过">
+          <el-switch v-model="form.skip_if_running" />
+          <span style="margin-left: 10px; color: #909399; font-size: 12px;">开启后，如果任务在本机还在执行中，下次触发时将直接跳过</span>
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
         <el-button type="primary" @click="handleSave" :loading="saving">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- SQL 内容查看弹窗 -->
+    <el-dialog v-model="sqlViewerVisible" title="SQL 脚本内容" width="60%" class="sql-viewer-dialog" @opened="initSqlViewer" @closed="destroySqlViewer">
+      <div ref="sqlViewerContainer" class="sql-viewer"></div>
+      <template #footer>
+        <el-button type="primary" size="small" @click="copySqlContent">
+          <el-icon><CopyDocument /></el-icon> 复制
+        </el-button>
       </template>
     </el-dialog>
 
@@ -243,11 +275,17 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getTasks, createTask, updateTask, deleteTask, executeTask, getHosts, getDatabases } from '../api'
 import SqlEditor from '../components/SqlEditor.vue'
+import { EditorState } from '@codemirror/state'
+import { EditorView } from '@codemirror/view'
+import { highlightSpecialChars, drawSelection, lineNumbers } from '@codemirror/view'
+import { bracketMatching, syntaxHighlighting, defaultHighlightStyle, foldGutter } from '@codemirror/language'
+import { sql } from '@codemirror/lang-sql'
+import { oneDark } from '@codemirror/theme-one-dark'
 
 const route = useRoute()
 
@@ -274,12 +312,14 @@ const filterType = ref('')
 const filterActive = ref('')
 const filterGroup = ref('')
 const filterHost = ref('')
+const filterDatabase = ref('')
 const filterLastResult = ref('')
 const page = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
 const groupOptions = ref([])
 const hostOptions = ref([])
+const databaseOptions = ref([])
 const selectedRows = ref([])
 
 const dialogVisible = ref(false)
@@ -288,6 +328,67 @@ const saving = ref(false)
 const hosts = ref([])
 const databases = ref([])
 
+const sqlViewerVisible = ref(false)
+const sqlViewerContent = ref('')
+const sqlViewerContainer = ref(null)
+let sqlViewerEditor = null
+
+const showSqlContent = (row) => {
+  sqlViewerContent.value = row.sql_content || ''
+  sqlViewerVisible.value = true
+}
+
+const initSqlViewer = () => {
+  destroySqlViewer()
+  if (sqlViewerContainer.value) {
+    sqlViewerEditor = new EditorView({
+      state: EditorState.create({
+        doc: sqlViewerContent.value,
+        extensions: [
+          lineNumbers(),
+          highlightSpecialChars(),
+          drawSelection(),
+          foldGutter(),
+          bracketMatching(),
+          syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+          sql(),
+          oneDark,
+          EditorView.lineWrapping,
+          EditorView.domEventHandlers({
+            keydown: () => true,
+            cut: () => true,
+            paste: () => true,
+            drop: () => true,
+          }),
+        ]
+      }),
+      parent: sqlViewerContainer.value
+    })
+  }
+}
+
+const destroySqlViewer = () => {
+  if (sqlViewerEditor) {
+    sqlViewerEditor.destroy()
+    sqlViewerEditor = null
+  }
+}
+
+const copySqlContent = async () => {
+  try {
+    await navigator.clipboard.writeText(sqlViewerContent.value)
+    ElMessage.success('已复制到剪贴板')
+  } catch {
+    const textarea = document.createElement('textarea')
+    textarea.value = sqlViewerContent.value
+    document.body.appendChild(textarea)
+    textarea.select()
+    document.execCommand('copy')
+    document.body.removeChild(textarea)
+    ElMessage.success('已复制到剪贴板')
+  }
+}
+
 const batchAssignVisible = ref(false)
 const batchAssignHostIds = ref([])
 const batchAssignMode = ref('replace')
@@ -295,8 +396,9 @@ const batchAssignLoading = ref(false)
 
 const defaultForm = () => ({
   name: '', group: '', task_type: 'python', is_active: true,
-  project_path: '', executor_path: '', script_path: '',
+  project_path: '', executor_path: '', script_path: '', script_args: '',
   sql_content: '', cron_expression: '', timeout_seconds: 0,
+  skip_if_running: false,
   database: null, host_ids: [],
 })
 const form = ref(defaultForm())
@@ -310,6 +412,7 @@ const fetchData = async () => {
     if (filterActive.value) params.is_active = filterActive.value
     if (filterGroup.value) params.group = filterGroup.value
     if (filterHost.value) params.host = filterHost.value
+    if (filterDatabase.value) params.database = filterDatabase.value
     if (filterLastResult.value) params.last_result = filterLastResult.value
     const res = await getTasks(params)
     tasks.value = res.data.results || res.data
@@ -338,9 +441,10 @@ const openDialog = async (task) => {
       name: task.name, group: task.group, task_type: task.task_type,
       is_active: task.is_active, project_path: task.project_path || '',
       executor_path: task.executor_path || '', script_path: task.script_path || '',
+      script_args: task.script_args || '',
       sql_content: task.sql_content || '', cron_expression: task.cron_expression || '',
       timeout_seconds: task.timeout_seconds, database: task.database,
-      host_ids: task.hosts || [],
+      host_ids: task.hosts || [], skip_if_running: task.skip_if_running || false,
     }
   } else {
     editingTask.value = null
@@ -518,6 +622,7 @@ onMounted(async () => {
   if (q.task_type) filterType.value = q.task_type
   if (q.is_active) filterActive.value = q.is_active
   if (q.group) filterGroup.value = q.group
+  if (q.database) filterDatabase.value = q.database
   try {
     const { getTaskGroups } = await import('../api')
     const res = await getTaskGroups()
@@ -528,6 +633,10 @@ onMounted(async () => {
     const hostList = hRes.data.results || hRes.data
     hostOptions.value = [...new Set(hostList.map(h => h.ip))]
     hosts.value = hostList
+  } catch {}
+  try {
+    const dRes = await getDatabases({ page_size: 1000 })
+    databaseOptions.value = dRes.data.results || dRes.data
   } catch {}
   fetchData()
 })
@@ -578,5 +687,23 @@ onMounted(async () => {
   padding: 12px 20px;
   border-top: 1px solid #ebeef5;
   flex-shrink: 0;
+}
+.sql-viewer-dialog :deep(.el-dialog__body) {
+  min-height: 500px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.sql-viewer {
+  flex: 1;
+  overflow: hidden;
+  height: 500px;
+}
+.sql-viewer :deep(.cm-editor) {
+  height: 100%;
+  font-size: 13px;
+}
+.sql-viewer :deep(.cm-scroller) {
+  overflow: auto;
 }
 </style>

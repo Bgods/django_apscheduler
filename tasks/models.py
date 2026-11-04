@@ -80,6 +80,10 @@ class TaskConfig(models.Model):
         '执行脚本', max_length=500, blank=True, default='',
         help_text='脚本文件名，如 同步数据.py、生成报表.sql 等。SQL 任务可留空改用内联 SQL'
     )
+    script_args = models.CharField(
+        '脚本参数', max_length=500, blank=True, default='',
+        help_text='命令行参数，如 --mode single --strategy full。留空则不传参数'
+    )
     sql_content = models.TextField(
         'SQL 内容', blank=True, default='',
         help_text='填写要执行的 SQL 语句'
@@ -96,6 +100,10 @@ class TaskConfig(models.Model):
     timeout_seconds = models.PositiveIntegerField(
         '超时时间(秒)', default=0,
         help_text='0 表示不限制。超过此时间任务将被终止并标记为超时',
+    )
+    skip_if_running = models.BooleanField(
+        '执行中跳过', null=True, blank=True, default=False,
+        help_text='开启后，如果任务在本机还在执行中，下次触发时将直接跳过',
     )
     hosts = models.ManyToManyField(
         HostConfig,
@@ -122,6 +130,9 @@ class TaskConfig(models.Model):
         verbose_name = '任务配置'
         verbose_name_plural = verbose_name
         ordering = ['-is_active', '-id']
+        indexes = [
+            models.Index(fields=['database'], name='idx_task_database'),
+        ]
 
     def save(self, *args, **kwargs):
         """保存前清理路径中的不可见字符，SQL 任务清空路径字段"""
@@ -310,6 +321,11 @@ class TaskExecutionLog(models.Model):
         verbose_name = '执行日志'
         verbose_name_plural = verbose_name
         ordering = ['-start_time']
+        indexes = [
+            models.Index(fields=['task', '-id'], name='idx_log_task_latest'),
+            models.Index(fields=['result'], name='idx_log_result'),
+            models.Index(fields=['start_time'], name='idx_log_start_time'),
+        ]
 
     def __str__(self):
         return f'{self.task.name}'

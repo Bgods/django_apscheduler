@@ -1,7 +1,7 @@
-# sync_code.ps1 - Pull latest code from Gitea (self-updating)
+# sync_code.ps1 - Pull latest code from GitHub (self-updating)
 $ErrorActionPreference = "Stop"
 
-$gitUrl = "http://192.168.13.75:3000/chenfs/django_apscheduler.git"
+$gitUrl = "https://github.com/Bgods/django_apscheduler.git"
 $branch = "master"
 $target = $PSScriptRoot
 
