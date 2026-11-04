@@ -5,9 +5,9 @@
 ## 目录
 
 - [功能特性](#功能特性)
+- [管理后台说明](#管理后台说明)
 - [环境要求](#环境要求)
 - [快速部署](#快速部署)
-- [管理后台说明](#管理后台说明)
 - [日志管理](#日志管理)
 - [常见问题](#常见问题)
 - [附录](#附录)
@@ -24,58 +24,6 @@
 - Vue 3 + Element Plus 前后端分离管理后台
 - Windows 服务化部署（开机自启 + 崩溃重启）
 - 支持多机分布式部署
-
-***
-
-## 环境要求
-
-| 组件     | 要求                                     |
-| ------ | -------------------------------------- |
-| 操作系统   | Windows 10/11、Windows Server 2016+     |
-| Python | 3.10+（推荐 3.12）                         |
-| Git    | 任意版本                                    |
-| 数据库    | SQLite（内置）或 MySQL 5.7+ / MariaDB 10.3+ |
-
-***
-
-## 快速部署
-
-### 1. 克隆代码
-
-```powershell
-git clone https://github.com/Bgods/django_apscheduler.git
-cd django_apscheduler
-```
-
-### 2. 配置环境
-
-复制 `.env.example` 为 `.env` 并修改：
-
-```powershell
-copy .env.example .env
-```
-
-主要配置项：
-- `SECRET_KEY`：修改为随机字符串
-- `NAME`/`USER`/`PASSWORD`/`HOST`/`PORT`：MySQL 数据库配置（多机部署必须使用 MySQL）
-
-### 3. 运行部署脚本
-
-以**管理员身份**运行 `deploy.bat`，脚本自动完成：
-
-1. 环境检查（Git、Python 版本）
-2. 下载 NSSM（服务管理工具）
-3. 拉取最新代码
-4. 创建虚拟环境并安装依赖
-5. 数据库迁移
-6. 创建管理员账户（首次部署）
-7. 注册并启动 Windows 服务
-
-部署完成后访问：`http://localhost:8000/app/`
-
-### 多机部署
-
-每台机器重复上述步骤，确保所有机器的 `.env` 数据库配置一致。
 
 ***
 
@@ -143,6 +91,58 @@ copy .env.example .env
 | 执行脚本     | 需要执行的脚本文件名          |
 | SQL 内容   | SQL 任务直接填写的 SQL 语句  |
 | Cron 表达式 | 分 时 日 月 周，留空=仅手动触发  |
+
+***
+
+## 环境要求
+
+| 组件     | 要求                                     |
+| ------ | -------------------------------------- |
+| 操作系统   | Windows 10/11、Windows Server 2016+     |
+| Python | 3.10+（推荐 3.12）                         |
+| Git    | 任意版本                                    |
+| 数据库    | SQLite（内置）或 MySQL 5.7+ / MariaDB 10.3+ |
+
+***
+
+## 快速部署
+
+### 1. 克隆代码
+
+```powershell
+git clone https://github.com/Bgods/django_apscheduler.git
+cd django_apscheduler
+```
+
+### 2. 配置环境
+
+复制 `.env.example` 为 `.env` 并修改：
+
+```powershell
+copy .env.example .env
+```
+
+主要配置项：
+- `SECRET_KEY`：修改为随机字符串
+- `NAME`/`USER`/`PASSWORD`/`HOST`/`PORT`：MySQL 数据库配置（多机部署必须使用 MySQL）
+
+### 3. 运行部署脚本
+
+以**管理员身份**运行 `deploy.bat`，脚本自动完成：
+
+1. 环境检查（Git、Python 版本）
+2. 下载 NSSM（服务管理工具）
+3. 拉取最新代码
+4. 创建虚拟环境并安装依赖
+5. 数据库迁移
+6. 创建管理员账户（首次部署）
+7. 注册并启动 Windows 服务
+
+部署完成后访问：`http://localhost:8000/app/`
+
+### 多机部署
+
+每台机器重复上述步骤，确保所有机器的 `.env` 数据库配置一致。
 
 ***
 
