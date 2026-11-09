@@ -1,5 +1,4 @@
 import json
-import locale
 import logging
 import os
 import re
@@ -273,11 +272,14 @@ def _execute_python(config: TaskConfig, log: TaskExecutionLog):
     cmd, cwd = _get_cmd_and_cwd(config)
 
     start = timezone.now()
+    env = os.environ.copy()
+    env['PYTHONIOENCODING'] = 'utf-8'
     process = subprocess.Popen(
         cmd,
         cwd=cwd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        env=env,
     )
     timeout = config.timeout_seconds or None
     try:
@@ -291,9 +293,8 @@ def _execute_python(config: TaskConfig, log: TaskExecutionLog):
     log.end_time = end
     log.duration = (end - start).total_seconds()
     log.return_code = process.returncode
-    encoding = locale.getpreferredencoding(do_setlocale=False)
-    out_text = stdout.decode(encoding, errors='replace')
-    err_text = stderr.decode(encoding, errors='replace')
+    out_text = stdout.decode('utf-8', errors='replace')
+    err_text = stderr.decode('utf-8', errors='replace')
 
     # stderr 合并到 output（Python logging 默认输出到 stderr）
     if err_text:
@@ -361,10 +362,13 @@ def _execute_sql(config: TaskConfig, log: TaskExecutionLog):
         cmd = [py, runner_path, cfg_path]
 
         start = timezone.now()
+        env = os.environ.copy()
+        env['PYTHONIOENCODING'] = 'utf-8'
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            env=env,
         )
         timeout = config.timeout_seconds or None
         try:
@@ -378,9 +382,8 @@ def _execute_sql(config: TaskConfig, log: TaskExecutionLog):
         log.end_time = end
         log.duration = (end - start).total_seconds()
         log.return_code = process.returncode
-        encoding = locale.getpreferredencoding(do_setlocale=False)
-        out_text = stdout.decode(encoding, errors='replace')
-        err_text = stderr.decode(encoding, errors='replace')
+        out_text = stdout.decode('utf-8', errors='replace')
+        err_text = stderr.decode('utf-8', errors='replace')
 
         if err_text:
             if out_text:
