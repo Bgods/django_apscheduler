@@ -232,6 +232,12 @@ def execute_script(config: TaskConfig, force: bool = False) -> TaskExecutionLog:
         command_text=command_text,
     )
 
+    # 同步更新 TaskConfig.last_execution_log，优化后续最近执行查询
+    try:
+        TaskConfig.objects.filter(pk=config.pk).update(last_execution_log=log)
+    except Exception as update_err:
+        logger.warning(f'更新 last_execution_log 失败 (task={config.pk}, log={log.pk}): {update_err}')
+
     try:
         if config.task_type == 'sql':
             _execute_sql(config, log)

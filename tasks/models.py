@@ -121,6 +121,12 @@ class TaskConfig(models.Model):
         verbose_name='目标数据库', related_name='tasks',
         help_text='仅 SQL 任务需要选择',
     )
+    last_execution_log = models.ForeignKey(
+        'TaskExecutionLog', on_delete=models.SET_NULL, null=True, blank=True,
+        verbose_name='最近一次执行日志',
+        related_name='+',
+        help_text='指向该任务最新一条执行日志，每次创建日志时自动更新',
+    )
 
     created_at = models.DateTimeField('创建时间', auto_now_add=True)
     updated_at = models.DateTimeField('更新时间', auto_now=True)
