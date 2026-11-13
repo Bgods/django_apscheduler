@@ -199,10 +199,13 @@ class TaskConfigSerializer(serializers.ModelSerializer):
         if not log:
             return None
         return {
+            'id': log.id,
             'start_time': timezone.localtime(log.start_time).strftime('%Y-%m-%d %H:%M'),
             'result': log.result,
             'result_display': log.get_result_display(),
             'duration': round(log.duration, 2) if log.duration else None,
+            'execution_host': log.execution_host,
+            'error_message': log.error_message,
         }
 
     def validate(self, data):
