@@ -6,7 +6,7 @@ import urllib.request
 from django.conf import settings
 from django.contrib.auth import authenticate, login, logout, get_user_model
 from django.contrib.auth.models import Group, Permission
-from django.db.models import OuterRef, Subquery, Count, Max, Prefetch
+from django.db.models import Count
 from rest_framework import viewsets, status
 from rest_framework.decorators import action, api_view
 from rest_framework.permissions import AllowAny, IsAdminUser
@@ -104,22 +104,11 @@ class TaskConfigViewSet(viewsets.ModelViewSet):
     serializer_class = TaskConfigSerializer
 
     def get_queryset(self):
-        # 预查询每个任务最新日志的 ID（非关联子查询，数据库可优化为 Hash Join）
-        latest_log_ids = (
-            TaskExecutionLog.objects
-            .values('task').annotate(latest_id=Max('id'))
-            .values('latest_id')
-        )
-        # Prefetch 仅加载每个任务的最新一条日志
-        last_log_prefetch = Prefetch(
-            'execution_logs',
-            queryset=TaskExecutionLog.objects.filter(id__in=latest_log_ids),
-            to_attr='_last_logs',
-        )
+        # 直接 select_related 取 last_execution_log，消除原来的 GROUP BY + MAX(id) 子查询
         qs = (
             TaskConfig.objects
-            .select_related('database')
-            .prefetch_related('hosts', last_log_prefetch)
+            .select_related('database', 'last_execution_log')
+            .prefetch_related('hosts')
         )
         params = self.request.query_params
         is_active = params.get('is_active')
@@ -142,13 +131,8 @@ class TaskConfigViewSet(viewsets.ModelViewSet):
             qs = qs.filter(database_id=database)
         last_result = params.get('last_result')
         if last_result:
-            # 非关联子查询：找出最新日志结果为指定值的任务
-            task_ids = (
-                TaskExecutionLog.objects
-                .filter(id__in=latest_log_ids, result=last_result)
-                .values('task_id')
-            )
-            qs = qs.filter(id__in=task_ids)
+            # 直接通过 last_execution_log FK 过滤，无需子查询
+            qs = qs.filter(last_execution_log__result=last_result)
         return qs
 
     @action(detail=False, methods=['get'])

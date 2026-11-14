@@ -194,19 +194,18 @@ class TaskConfigSerializer(serializers.ModelSerializer):
             return '-'
 
     def get_last_execution(self, obj):
-        # 使用 Prefetch 预加载的最新日志（避免 N+1 查询）
-        last_logs = getattr(obj, '_last_logs', None)
-        if last_logs is not None:
-            log = last_logs[0] if last_logs else None
-        else:
-            log = obj.execution_logs.order_by('-id').first()
+        # 直接通过 last_execution_log FK 获取（viewsets.get_queryset 已 select_related 预加载）
+        log = obj.last_execution_log
         if not log:
             return None
         return {
+            'id': log.id,
             'start_time': timezone.localtime(log.start_time).strftime('%Y-%m-%d %H:%M'),
             'result': log.result,
             'result_display': log.get_result_display(),
             'duration': round(log.duration, 2) if log.duration else None,
+            'execution_host': log.execution_host,
+            'error_message': log.error_message,
         }
 
     def validate(self, data):
